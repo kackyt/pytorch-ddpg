@@ -11,7 +11,7 @@ from evaluator import Evaluator
 from ddpg import DDPG
 from util import *
 
-gym.undo_logger_setup()
+# gym.undo_logger_setup()
 
 def train(num_iterations, agent, env,  evaluate, validate_steps, output, max_episode_length=None, debug=False):
 
@@ -122,7 +122,7 @@ if __name__ == "__main__":
     if args.resume == 'default':
         args.resume = 'output/{}-run0'.format(args.env)
 
-    env = NormalizedEnv(gym.make(args.env))
+    env = gym.make(args.env)# NormalizedEnv(gym.make(args.env))
 
     if args.seed > 0:
         np.random.seed(args.seed)

@@ -56,6 +56,9 @@ class DDPG(object):
         self.a_t = None # Most recent action
         self.is_training = True
 
+        self.update_count = 0
+        self.update_cycle = int(1 / self.tau)
+
         # 
         if USE_CUDA: self.cuda()
 
@@ -66,13 +69,12 @@ class DDPG(object):
 
         # Prepare for the target q batch
         next_q_values = self.critic_target([
-            to_tensor(next_state_batch, volatile=True),
-            self.actor_target(to_tensor(next_state_batch, volatile=True)),
+            to_tensor(next_state_batch),
+            self.actor_target(to_tensor(next_state_batch)),
         ])
-        next_q_values.volatile=False
 
         target_q_batch = to_tensor(reward_batch) + \
-            self.discount*to_tensor(terminal_batch.astype(np.float))*next_q_values
+            self.discount*to_tensor(terminal_batch.astype(np.float))*next_q_values.detach()
 
         # Critic update
         self.critic.zero_grad()
@@ -96,8 +98,12 @@ class DDPG(object):
         self.actor_optim.step()
 
         # Target update
-        soft_update(self.actor_target, self.actor, self.tau)
-        soft_update(self.critic_target, self.critic, self.tau)
+        self.update_count += 1
+
+        if self.update_count == self.update_cycle:
+          hard_update(self.actor_target, self.actor)
+          hard_update(self.critic_target, self.critic)
+          self.update_count = 0
 
     def eval(self):
         self.actor.eval()
