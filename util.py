@@ -18,8 +18,7 @@ def prBlack(prt): print("\033[98m {}\033[00m" .format(prt))
 def to_numpy(var):
     return var.detach().cpu().numpy()
 
-def to_tensor(ndarray, requires_grad=False, dtype=FLOAT):
-    device = 'cuda' if USE_CUDA else 'cpu'
+def to_tensor(ndarray, device, requires_grad=False, dtype=FLOAT):
     return torch.tensor(ndarray, requires_grad=requires_grad, dtype=dtype, device=device)
 
 def hard_update(target, source):

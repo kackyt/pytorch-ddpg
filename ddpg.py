@@ -15,9 +15,9 @@ from util import *
 criterion = nn.MSELoss()
 
 class DDPG(object):
-    def __init__(self, nb_states, nb_actions, args):
+    def __init__(self, nb_states, nb_actions, device, hidden1=400, hidden2=300, init_w=1e-3, rate=0.001, prate=0.0001, rmsize=6000000, window_length=1, ou_theta=0.15, ou_mu=0.0, ou_sigma=0.2, bsize=64, discount=0.99, epsilon=50000, update_cycle=1000, seed=-1):
         
-        if args.seed > 0:
+        if seed > 0:
             self.seed(args.seed)
 
         self.nb_states = nb_states
@@ -25,30 +25,31 @@ class DDPG(object):
         
         # Create Actor and Critic Network
         net_cfg = {
-            'hidden1':args.hidden1, 
-            'hidden2':args.hidden2, 
-            'init_w':args.init_w
+            'hidden1':hidden1, 
+            'hidden2':hidden2, 
+            'init_w':init_w
         }
         self.actor = Actor(self.nb_states, self.nb_actions, **net_cfg)
         self.actor_target = Actor(self.nb_states, self.nb_actions, **net_cfg)
-        self.actor_optim  = Adam(self.actor.parameters(), lr=args.prate)
+        self.actor_optim  = Adam(self.actor.parameters(), lr=prate)
+        self.actor_target.eval()
 
         self.critic = Critic(self.nb_states, self.nb_actions, **net_cfg)
         self.critic_target = Critic(self.nb_states, self.nb_actions, **net_cfg)
-        self.critic_optim  = Adam(self.critic.parameters(), lr=args.rate)
+        self.critic_optim  = Adam(self.critic.parameters(), lr=rate)
+        self.critic_target.eval()
 
         hard_update(self.actor_target, self.actor) # Make sure target is with the same weight
         hard_update(self.critic_target, self.critic)
         
         #Create replay buffer
-        self.memory = SequentialMemory(limit=args.rmsize, window_length=args.window_length)
-        self.random_process = OrnsteinUhlenbeckProcess(size=nb_actions, theta=args.ou_theta, mu=args.ou_mu, sigma=args.ou_sigma)
+        self.memory = SequentialMemory(limit=rmsize, window_length=window_length)
+        self.random_process = OrnsteinUhlenbeckProcess(size=nb_actions, theta=ou_theta, mu=ou_mu, sigma=ou_sigma)
 
         # Hyper-parameters
-        self.batch_size = args.bsize
-        self.tau = args.tau
-        self.discount = args.discount
-        self.depsilon = 1.0 / args.epsilon
+        self.batch_size = bsize
+        self.discount = discount
+        self.depsilon = 1.0 / epsilon
 
         # 
         self.epsilon = 1.0
@@ -57,10 +58,9 @@ class DDPG(object):
         self.is_training = True
 
         self.update_count = 0
-        self.update_cycle = int(1 / self.tau)
+        self.update_cycle = update_cycle
 
-        # 
-        if USE_CUDA: self.cuda()
+        self.to(device)
 
     def update_policy(self):
         # Sample batch
@@ -69,17 +69,17 @@ class DDPG(object):
 
         # Prepare for the target q batch
         next_q_values = self.critic_target([
-            to_tensor(next_state_batch),
-            self.actor_target(to_tensor(next_state_batch)),
+            to_tensor(next_state_batch, self.device),
+            self.actor_target(to_tensor(next_state_batch, self.device)),
         ])
 
-        target_q_batch = to_tensor(reward_batch) + \
-            self.discount*to_tensor(terminal_batch.astype(np.float))*next_q_values.detach()
+        target_q_batch = to_tensor(reward_batch, self.device) + \
+            self.discount*to_tensor(terminal_batch.astype(np.float), self.device)*next_q_values.detach()
 
         # Critic update
         self.critic.zero_grad()
 
-        q_batch = self.critic([ to_tensor(state_batch), to_tensor(action_batch) ])
+        q_batch = self.critic([ to_tensor(state_batch, self.device), to_tensor(action_batch, self.device) ])
         
         value_loss = criterion(q_batch, target_q_batch)
         value_loss.backward()
@@ -89,8 +89,8 @@ class DDPG(object):
         self.actor.zero_grad()
 
         policy_loss = -self.critic([
-            to_tensor(state_batch),
-            self.actor(to_tensor(state_batch))
+            to_tensor(state_batch, self.device),
+            self.actor(to_tensor(state_batch, self.device))
         ])
 
         policy_loss = policy_loss.mean()
@@ -107,15 +107,18 @@ class DDPG(object):
 
     def eval(self):
         self.actor.eval()
-        self.actor_target.eval()
         self.critic.eval()
-        self.critic_target.eval()
 
-    def cuda(self):
-        self.actor.cuda()
-        self.actor_target.cuda()
-        self.critic.cuda()
-        self.critic_target.cuda()
+    def train(self):
+        self.actor.train()
+        self.critic.train()
+
+    def to(self, device):
+        self.actor.to(device)
+        self.actor_target.to(device)
+        self.critic.to(device)
+        self.critic_target.to(device)
+        self.device = device
 
     def observe(self, r_t, s_t1, done):
         if self.is_training:
@@ -129,7 +132,7 @@ class DDPG(object):
 
     def select_action(self, s_t, decay_epsilon=True):
         action = to_numpy(
-            self.actor(to_tensor(np.array([s_t])))
+            self.actor(to_tensor(np.array([s_t]), self.device))
         ).squeeze(0)
         action += self.is_training*max(self.epsilon, 0)*self.random_process.sample()
         action = np.clip(action, -1., 1.)
@@ -168,5 +171,3 @@ class DDPG(object):
 
     def seed(self,s):
         torch.manual_seed(s)
-        if USE_CUDA:
-            torch.cuda.manual_seed(s)

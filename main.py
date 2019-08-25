@@ -131,8 +131,26 @@ if __name__ == "__main__":
     nb_states = env.observation_space.shape[0]
     nb_actions = env.action_space.shape[0]
 
+    argsmap = deepcopy(vars(args))
 
-    agent = DDPG(nb_states, nb_actions, args)
+    del argsmap['mode']
+    del argsmap['env']
+    del argsmap['warmup']
+    del argsmap['output']
+    del argsmap['validate_episodes']
+    del argsmap['max_episode_length']
+    del argsmap['validate_steps']
+    del argsmap['debug']
+    del argsmap['train_iter']
+    del argsmap['resume']
+    del argsmap['tau']
+
+    if USE_CUDA:
+        device = 'cuda'
+    else:
+        device = 'cpu'
+
+    agent = DDPG(nb_states, nb_actions, device, **argsmap)
     evaluate = Evaluator(args.validate_episodes, 
         args.validate_steps, args.output, max_episode_length=args.max_episode_length)
 
