@@ -15,13 +15,14 @@ from util import *
 criterion = nn.MSELoss()
 
 class DDPG(object):
-    def __init__(self, nb_states, nb_actions, device, hidden1=400, hidden2=300, init_w=1e-3, rate=0.001, prate=0.0001, rmsize=6000000, window_length=1, ou_theta=0.15, ou_mu=0.0, ou_sigma=0.2, bsize=64, discount=0.99, epsilon=50000, update_cycle=1000, seed=-1):
+    def __init__(self, nb_states, nb_actions, device, writer=None, hidden1=400, hidden2=300, init_w=1e-3, rate=0.001, prate=0.0001, rmsize=600000, window_length=1, ou_theta=0.15, ou_mu=0.0, ou_sigma=0.2, bsize=64, discount=0.99, epsilon=50000, update_cycle=1000, seed=-1):
         
         if seed > 0:
             self.seed(args.seed)
 
         self.nb_states = nb_states
         self.nb_actions= nb_actions
+        self.writer = writer
         
         # Create Actor and Critic Network
         net_cfg = {
@@ -43,7 +44,9 @@ class DDPG(object):
         hard_update(self.critic_target, self.critic)
         
         #Create replay buffer
-        self.memory = SequentialMemory(limit=rmsize, window_length=window_length)
+        self.rmsize = rmsize
+        self.window_length = window_length
+        self.clear_memory()
         self.random_process = OrnsteinUhlenbeckProcess(size=nb_actions, theta=ou_theta, mu=ou_mu, sigma=ou_sigma)
 
         # Hyper-parameters
@@ -62,15 +65,18 @@ class DDPG(object):
 
         self.to(device)
 
-    def update_policy(self):
+    def update_policy(self, iteration):
         # Sample batch
         state_batch, action_batch, reward_batch, \
         next_state_batch, terminal_batch = self.memory.sample_and_split(self.batch_size)
 
+        next_state_batch_tensor = to_tensor(next_state_batch, self.device)
+        state_batch_tensor = to_tensor(state_batch, self.device)
+
         # Prepare for the target q batch
         next_q_values = self.critic_target([
-            to_tensor(next_state_batch, self.device),
-            self.actor_target(to_tensor(next_state_batch, self.device)),
+            next_state_batch_tensor,
+            self.actor_target(next_state_batch_tensor),
         ])
 
         target_q_batch = to_tensor(reward_batch, self.device) + \
@@ -79,9 +85,12 @@ class DDPG(object):
         # Critic update
         self.critic.zero_grad()
 
-        q_batch = self.critic([ to_tensor(state_batch, self.device), to_tensor(action_batch, self.device) ])
+        q_batch = self.critic([ state_batch_tensor, to_tensor(action_batch, self.device) ])
         
         value_loss = criterion(q_batch, target_q_batch)
+
+        if self.writer is not None:
+            self.writer.add_scalar('data/loss', value_loss.cpu().item(), iteration)
         value_loss.backward()
         self.critic_optim.step()
 
@@ -89,11 +98,14 @@ class DDPG(object):
         self.actor.zero_grad()
 
         policy_loss = -self.critic([
-            to_tensor(state_batch, self.device),
-            self.actor(to_tensor(state_batch, self.device))
+            state_batch_tensor,
+            self.actor(state_batch_tensor)
         ])
 
         policy_loss = policy_loss.mean()
+
+        if self.writer is not None:
+            self.writer.add_scalar('data/policy_loss', policy_loss.cpu().item(), iteration)
         policy_loss.backward()
         self.actor_optim.step()
 
@@ -142,6 +154,9 @@ class DDPG(object):
         
         self.a_t = action
         return action
+
+    def clear_memory(self):
+        self.memory = SequentialMemory(limit=self.rmsize, window_length=self.window_length)
 
     def reset(self, obs):
         self.s_t = obs
